@@ -7,20 +7,23 @@ from pathlib import Path
 from utils import experiment_manager
 from networks import network_parts
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 
 def create_network(cfg):
     if cfg.MODEL.TYPE == 'unet':
-        return UNet(cfg)
+        model = UNet(cfg)
     elif cfg.MODEL.TYPE == 'siamdiff':
-        return SiamDiff(cfg)
+        model = SiamDiff(cfg)
     elif cfg.MODEL.TYPE == 'unetlstm':
-        return UNetLSTM(cfg)
+        model = UNetLSTM(cfg)
     elif cfg.MODEL.TYPE == 'lunet':
-        return LUNet(cfg)
+        model = LUNet(cfg)
     elif cfg.MODEL.TYPE == 'alunet':
-        return ALUNet(cfg)
+        model = ALUNet(cfg)
     else:
         raise Exception(f'Unknown network ({cfg.MODEL.TYPE}).')
+    return nn.DataParallel(model)
 
 
 def save_checkpoint(network, optimizer, epoch, step, cfg: experiment_manager.CfgNode, early_stopping: bool = False):
@@ -190,7 +193,7 @@ class UNetLSTM(nn.Module):
 
         self.Conv_1x1 = nn.Conv2d(16, cfg.MODEL.OUT_CHANNELS, kernel_size=1, stride=1, padding=0)
 
-    def encoder(self, x: torch.tensor, device):
+    def encoder(self, x: torch.tensor):
         x1, xout = self.set1(self.Conv1, x, device)
         x2, xout = self.set2(nn.Sequential(self.Maxpool, self.Conv2), xout, device)
         x3, xout = self.set3(nn.Sequential(self.Maxpool, self.Conv3), xout, device)
@@ -199,12 +202,12 @@ class UNetLSTM(nn.Module):
 
         return x1, x2, x3, x4, x5
 
-    def forward(self, x: torch.tensor, device):
+    def forward(self, x: torch.tensor):
         # (T, B, C, H, W)
         x = x.permute(1, 0, 2, 3, 4)
 
         # encoding path
-        x1, x2, x3, x4, x5 = self.encoder(x, device)
+        x1, x2, x3, x4, x5 = self.encoder(x)
 
         # decoding + concat path
         d5 = self.Up5(x5)

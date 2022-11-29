@@ -18,7 +18,7 @@ def inference_loop(net, dataset: datasets.AbstractSpaceNet7Dataset, device: str)
     with torch.no_grad():
         for step, item in enumerate(dataloader):
             x = item['x'].to(device)
-            logits = net(x.permute(1, 0, 2, 3, 4), device)
+            logits = net(x.permute(1, 0, 2, 3, 4))
             y_hat = torch.sigmoid(logits)
 
             y = item['y'].to(device)
@@ -34,7 +34,7 @@ def inference_loop(net, dataset: datasets.AbstractSpaceNet7Dataset, device: str)
     return data
 
 
-def model_evaluation(net, cfg, device, run_type: str, epoch: float, step: int) -> float:
+def model_evaluation(net, cfg, device: torch.device, run_type: str, epoch: float, step: int) -> float:
 
     ds = datasets.SpaceNet7EvaluationDataset(cfg, run_type)
 
@@ -50,7 +50,7 @@ def model_evaluation(net, cfg, device, run_type: str, epoch: float, step: int) -
     return f1_change
 
 
-def model_evaluation_earlystopping(net, cfg, device, run_type: str) -> float:
+def model_evaluation_earlystopping(net, cfg, device: torch.device, run_type: str) -> float:
     ds = datasets.SpaceNet7EvaluationDataset(cfg, run_type)
 
     data = inference_loop(net, ds, device)

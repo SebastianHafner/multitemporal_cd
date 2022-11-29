@@ -2,7 +2,7 @@ _BASE_: "base.yaml"
 DEBUG: False
 
 MODEL:
-  TYPE: 'siamdiff'
+  TYPE: 'unet'
 
 DATALOADER:
   ENFORCE_PATCH_SIZE: False

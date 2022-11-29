@@ -10,14 +10,15 @@ import wandb
 import numpy as np
 from pathlib import Path
 
-from utils import networks, datasets, loss_functions, evaluation, experiment_manager
+from utils import datasets, loss_functions, evaluation, experiment_manager
+from networks import networks
 
 
 def run_training(cfg):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    net = networks.L_UNet(cfg)
+    net = networks.create_network(cfg)
     net.to(device)
     optimizer = optim.AdamW(net.parameters(), lr=cfg.TRAINER.LR, weight_decay=0.01)
 
@@ -63,7 +64,7 @@ def run_training(cfg):
             x = batch['x'].to(device)
             y = batch['y'].to(device)
 
-            logits = net(x, device)
+            logits = net(x)
             y_hat = torch.sigmoid(logits)
 
             # y = (y > 0).float()
