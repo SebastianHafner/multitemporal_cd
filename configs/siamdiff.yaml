@@ -1,0 +1,9 @@
+_BASE_: "base.yaml"
+DEBUG: True
+
+MODEL:
+  TYPE: 'siamdiff'
+  PATCH_SIZE: 128
+
+DATALOADER:
+  TIMESERIES_LENGTH: 2
