@@ -9,13 +9,13 @@ from torch.utils import data as torch_data
 import wandb
 import numpy as np
 from pathlib import Path
+import matplotlib.pyplot as plt
 
 from utils import datasets, loss_functions, evaluation, experiment_manager
 from networks import networks
 
 
-def run_training(cfg):
-
+def run_test(cfg):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     net = networks.create_network(cfg)
@@ -63,6 +63,24 @@ def run_training(cfg):
             x = batch['x'].to(device)
             y = batch['y'].to(device)
 
+
+            B, TS, C, H, W = x.shape
+            fig, axs = plt.subplots(B, TS + 1, figsize=((TS + 1 * 3), B * 3), constrained_layout=True)
+            for i in range(B):
+                label = y[i, 0, ]
+                label = label.cpu().numpy()
+                axs[i, -1].imshow(label, cmap='gray')
+                for j in range(TS):
+                    img = x[i, j, ]
+                    img = img.permute(1, 2, 0).cpu().numpy()
+                    axs[i, j].imshow(img)
+
+            for _, ax in np.ndenumerate(axs):
+                ax.set_xticks([])
+                ax.set_yticks([])
+
+            plt.show()
+            plt.close(fig)
             logits = net(x)
             y_hat = torch.sigmoid(logits)
 
@@ -77,7 +95,7 @@ def run_training(cfg):
             global_step += 1
             epoch_float = global_step / steps_per_epoch
 
-            if global_step % cfg.LOGGING.FREQUENCY == 0 or cfg.DEBUG:
+            if global_step % cfg.LOGGING.FREQUENCY == 0:
                 print(f'Logging step {global_step} (epoch {epoch_float:.2f}).')
                 # evaluation on sample of training and validation set
                 _ = evaluation.model_evaluation(net, cfg, device, 'training', epoch_float, global_step)
@@ -140,17 +158,8 @@ if __name__ == '__main__':
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
 
-    wandb.init(
-        name=cfg.NAME,
-        config=cfg,
-        project='multitemporal_cd',
-        entity='spacenet7',
-        tags=['cd', 'multitemporal', 'spacenet7', ],
-        mode='online' if not cfg.DEBUG else 'disabled',
-    )
-
     try:
-        run_training(cfg)
+        run_test(cfg)
     except KeyboardInterrupt:
         try:
             sys.exit(0)

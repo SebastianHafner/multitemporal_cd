@@ -4,7 +4,7 @@ import wandb
 from utils import datasets, metrics
 
 
-def inference_loop(net, dataset: datasets.AbstractSpaceNet7Dataset, device: str) -> dict:
+def inference_loop(net, dataset: datasets.AbstractSpaceNet7Dataset, device: torch.device) -> dict:
 
     net.to(device)
     net.eval()
@@ -18,7 +18,7 @@ def inference_loop(net, dataset: datasets.AbstractSpaceNet7Dataset, device: str)
     with torch.no_grad():
         for step, item in enumerate(dataloader):
             x = item['x'].to(device)
-            logits = net(x.permute(1, 0, 2, 3, 4))
+            logits = net(x)
             y_hat = torch.sigmoid(logits)
 
             y = item['y'].to(device)
