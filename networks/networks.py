@@ -40,7 +40,7 @@ def save_checkpoint(network, optimizer, epoch, step, cfg: experiment_manager.Cfg
     torch.save(checkpoint, save_file)
 
 
-def load_checkpoint(epoch: float, cfg: experiment_manager.CfgNode, device: str, net_file: Path = None,
+def load_checkpoint(epoch: float, cfg: experiment_manager.CfgNode, device: torch.device, net_file: Path = None,
                     best_val: bool = False):
     net = create_network(cfg)
     net.to(device)
@@ -138,9 +138,34 @@ class LUNet(nn.Module):
         self._cfg = cfg
         n_channels = cfg.MODEL.IN_CHANNELS
         n_classes = cfg.MODEL.OUT_CHANNELS
+        self.convlstm1 = network_parts.ConvLSTM(n_channels, 16, (3, 3), 1)
+        self.pool1 = nn.MaxPool2d(2)
+        self.convltsm2 = network_parts.ConvLSTM(16, 32, (3, 3), 1)
+        self.pool2 = nn.MaxPool2d(2)
+        self.convlstm3 = network_parts.ConvLSTM(32, 64, (3, 3), 1)
+        self.up1 = nn.ConvTranspose2d(64, 64, 2, stride=2)
+        self.convlstm4 = network_parts.ConvLSTM(96, 32, (3, 3), 1)
+        self.up2 = nn.ConvTranspose2d(32, 32, 2, stride=2)
+        self.convlstm5 = network_parts.ConvLSTM(48, 16, (3, 3), 1)
+        self.conv6 = self.conv = nn.Conv2d(16, n_classes, 1)
 
     def forward(self, x: torch.tensor):
-        pass
+        x1, _ = self.convlstm1(x)
+        x1 = x1[0].permute(1, 0, 2, 3, 4)
+        x2 = self.pool1(x1)
+        x3, _ = self.convlstm2(x2)
+        x3 = x3[0].permute(1, 0, 2, 3, 4)
+        x4 = self.pool2(x3)
+        x5, _ = self.convlstm3(x4)
+        x5 = x5[0].permute(1, 0, 2, 3, 4)
+        x6 = self.up1(x5)
+        x7, _ = self.convlstm4(torch.cat((x3, x6), dim=1))
+        x7 = x7[0].permute(1, 0, 2, 3, 4)
+        x8 = self.up2(x7)
+        x9, _ = self.convlstm4(torch.cat((x1, x8), dim=1))
+        x9 = x9[0].permute(1, 0, 2, 3, 4)
+        out = self.conv6(x9)
+        return out
 
 
 class ALUNet(nn.Module):
