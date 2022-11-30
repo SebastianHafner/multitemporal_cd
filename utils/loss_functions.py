@@ -114,12 +114,10 @@ def jaccard_like_loss_multi_class(input: torch.Tensor, y: torch.Tensor):
     return loss
 
 
-def jaccard_like_loss(input: torch.Tensor, target: torch.Tensor, disable_sigmoid: bool = False):
-    input_sigmoid = torch.sigmoid(input) if not disable_sigmoid else input
+def jaccard_like_loss(y_hat: torch.Tensor, y: torch.Tensor):
     eps = 1e-6
-
-    iflat = input_sigmoid.flatten()
-    tflat = target.flatten()
+    iflat = y_hat.flatten()
+    tflat = y.flatten()
     intersection = (iflat * tflat).sum()
     denom = (iflat ** 2 + tflat ** 2).sum() - (iflat * tflat).sum() + eps
 
@@ -138,12 +136,10 @@ def dice_like_loss(input: torch.Tensor, target: torch.Tensor):
     return 1 - ((2. * intersection) / denom)
 
 
-def power_jaccard_loss(input: torch.Tensor, target: torch.Tensor, disable_sigmoid: bool = False):
-    input_sigmoid = torch.sigmoid(input) if not disable_sigmoid else input
+def power_jaccard_loss(y_hat: torch.Tensor, y: torch.Tensor):
     eps = 1e-6
-
-    iflat = input_sigmoid.flatten()
-    tflat = target.flatten()
+    iflat = y_hat.flatten()
+    tflat = y.flatten()
     intersection = (iflat * tflat).sum()
     denom = (iflat ** 2 + tflat ** 2).sum() - (iflat * tflat).sum() + eps
 

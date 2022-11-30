@@ -67,7 +67,6 @@ def run_training(cfg):
             logits = net(x)
             y_hat = torch.sigmoid(logits)
 
-            # y = (y > 0).float()
             loss = criterion(y_hat, y)
             loss.backward()
             optimizer.step()
