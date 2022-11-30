@@ -78,9 +78,7 @@ def run_training(cfg):
             global_step += 1
             epoch_float = global_step / steps_per_epoch
 
-            _ = evaluation.model_evaluation(net, cfg, device, 'training', epoch_float, global_step)
-
-            if global_step % cfg.LOGGING.FREQUENCY == 0:
+            if global_step % cfg.LOGGING.FREQUENCY == 0 or cfg.DEBUG:
                 print(f'Logging step {global_step} (epoch {epoch_float:.2f}).')
                 # evaluation on sample of training and validation set
                 _ = evaluation.model_evaluation(net, cfg, device, 'training', epoch_float, global_step)
