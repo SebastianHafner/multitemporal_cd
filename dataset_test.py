@@ -65,6 +65,9 @@ def run_test(cfg):
 
 
             B, TS, C, H, W = x.shape
+            pool = torch.nn.MaxPool3d((1, 2, 2))
+            # x = pool(x)
+
             fig, axs = plt.subplots(B, TS + 1, figsize=((TS + 1 * 3), B * 3), constrained_layout=True)
             for i in range(B):
                 label = y[i, 0, ]
