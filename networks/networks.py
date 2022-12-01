@@ -204,20 +204,57 @@ class ALUNet(nn.Module):
 
 
 class ConvLSTMNet(nn.Module):
+
     def __init__(self, cfg):
         super(ConvLSTMNet, self).__init__()
 
         self._cfg = cfg
-        n_channels = cfg.MODEL.IN_CHANNELS
+        num_channels = cfg.MODEL.IN_CHANNELS
         n_classes = cfg.MODEL.OUT_CHANNELS
-        self.convlstm = network_parts.ConvLSTM(n_channels, 16, (3, 3), 1, batch_first=True)
-        self.outconv = nn.Conv2d(16, n_classes, 1)
+        num_kernels = 64
+        kernel_size = (3, 3)
+        padding = (1, 1)
+        frame_size = (cfg.MODEL.PATCH_SIZE, cfg.MODEL.PATCH_SIZE)
+        num_layers = 3
 
-    def forward(self, x: torch.tensor):
-        x1, _ = self.convlstm(x)
-        x1 = x1[0]
-        out = self.outconv(x1[:, -1])
-        return out
+        self.sequential = nn.Sequential()
+
+        # Add First layer (Different in_channels than the rest)
+        self.sequential.add_module(
+            "convlstm1", network_parts.ConvLSTM(
+                in_channels=num_channels, out_channels=num_kernels,
+                kernel_size=kernel_size, padding=padding, frame_size=frame_size)
+        )
+
+        self.sequential.add_module(
+            "batchnorm1", nn.BatchNorm3d(num_features=num_kernels)
+        )
+
+        # Add rest of the layers
+        for l in range(2, num_layers + 1):
+            self.sequential.add_module(
+                f"convlstm{l}", network_parts.ConvLSTM(
+                    in_channels=num_kernels, out_channels=num_kernels,
+                    kernel_size=kernel_size, padding=padding, frame_size=frame_size)
+            )
+
+            self.sequential.add_module(
+                f"batchnorm{l}", nn.BatchNorm3d(num_features=num_kernels)
+            )
+
+            # Add Convolutional Layer to predict output frame
+        self.conv = nn.Conv2d(
+            in_channels=num_kernels, out_channels=n_classes,
+            kernel_size=kernel_size, padding=padding)
+
+    def forward(self, X):
+        # Forward propagation through all the layers
+        output = self.sequential(X)
+
+        # Return only the last output frame
+        output = self.conv(output[:, :, -1])
+
+        return output
 
 
 # U-net with LSTM units from https://ieeexplore.ieee.org/abstract/document/8900330
