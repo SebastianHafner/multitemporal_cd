@@ -140,49 +140,54 @@ class LUNet(nn.Module):
         self._cfg = cfg
         n_channels = cfg.MODEL.IN_CHANNELS
         n_classes = cfg.MODEL.OUT_CHANNELS
-        self.convlstm1 = network_parts.ConvLSTM(n_channels, 16, (3, 3), 1)
+        patch_size = cfg.MODEL.PATCH_SIZE
+
+        convlstm_kwargs = {
+            'kernel_size': (3, 3),
+            'padding': (1, 1),
+        }
+
+        self.convlstm1 = network_parts.ConvLSTM(n_channels, 16, (patch_size, patch_size), **convlstm_kwargs)
         self.pool1 = nn.MaxPool3d((1, 2, 2))
-        self.convlstm2 = network_parts.ConvLSTM(16, 32, (3, 3), 1)
+        self.convlstm2 = network_parts.ConvLSTM(16, 32, (patch_size // 2, patch_size // 2), **convlstm_kwargs)
         self.pool2 = nn.MaxPool3d((1, 2, 2))
-        self.convlstm3 = network_parts.ConvLSTM(32, 64, (3, 3), 1)
+        self.convlstm3 = network_parts.ConvLSTM(32, 64, (patch_size // 4, patch_size // 4), **convlstm_kwargs)
         self.up1 = nn.ConvTranspose2d(64, 64, 2, stride=2)
-        self.convlstm4 = network_parts.ConvLSTM(96, 32, (3, 3), 1)
+        self.convlstm4 = network_parts.ConvLSTM(96, 32, (patch_size // 2, patch_size // 2), **convlstm_kwargs)
         self.up2 = nn.ConvTranspose2d(32, 32, 2, stride=2)
-        self.convlstm5 = network_parts.ConvLSTM(48, 16, (3, 3), 1)
-        self.conv6 = nn.Conv2d(16, n_classes, 1)
+        self.convlstm5 = network_parts.ConvLSTM(48, 16, (patch_size, patch_size), ** convlstm_kwargs)
+        self.conv6 = nn.Conv2d(16, n_classes, (3, 3), padding=(1, 1))
 
     def forward(self, x: torch.tensor):
+        # (B, TS, C, H, W) -> (B, C, TS, H, W)
+        x = x.permute(0, 2, 1, 3, 4)
+
         # encoder
-        x1, _ = self.convlstm1(x)
-        x1 = x1[0].permute(1, 0, 2, 3, 4)
+        x1 = self.convlstm1(x)
 
         # down 1
         x2 = self.pool1(x1)
-        x3, _ = self.convlstm2(x2)
-        x3 = x3[0].permute(1, 0, 2, 3, 4)
+        x3 = self.convlstm2(x2)
 
         # down 2
         x4 = self.pool2(x3)
-        x5, _ = self.convlstm3(x4)
-        x5 = x5[0].permute(1, 0, 2, 3, 4)
+        x5 = self.convlstm3(x4)
 
         # up 1
         x6 = []
-        for i in range(x.size(1)):
-            x6.append(self.up1(x5[:, i]))
-        x6 = torch.stack(x6, dim=1)
-        x7, _ = self.convlstm4(torch.cat((x3, x6), dim=2))
-        x7 = x7[0].permute(1, 0, 2, 3, 4)
+        for i in range(x.size(2)):
+            x6.append(self.up1(x5[:, :, i]))
+        x6 = torch.stack(x6, dim=2)
+        x7 = self.convlstm4(torch.cat((x3, x6), dim=1))
 
         # up 2
         x8 = []
-        for i in range(x.size(1)):
-            x8.append(self.up2(x7[:, i]))
-        x8 = torch.stack(x8, dim=1)
-        x9, _ = self.convlstm5(torch.cat((x1, x8), dim=2))
-        x9 = x9[0].permute(1, 0, 2, 3, 4)
+        for i in range(x.size(2)):
+            x8.append(self.up2(x7[:, :, i]))
+        x8 = torch.stack(x8, dim=2)
+        x9 = self.convlstm5(torch.cat((x1, x8), dim=1))
 
-        out = self.conv6(x9[:, -1])
+        out = self.conv6(x9[:, :, -1])
         return out
 
 
@@ -211,19 +216,22 @@ class ConvLSTMNet(nn.Module):
         self._cfg = cfg
         num_channels = cfg.MODEL.IN_CHANNELS
         n_classes = cfg.MODEL.OUT_CHANNELS
+        patch_size = (cfg.MODEL.PATCH_SIZE, cfg.MODEL.PATCH_SIZE)
         num_kernels = 64
-        kernel_size = (3, 3)
-        padding = (1, 1)
-        frame_size = (cfg.MODEL.PATCH_SIZE, cfg.MODEL.PATCH_SIZE)
         num_layers = 3
 
         self.sequential = nn.Sequential()
 
+        convlstm_kwargs = {
+            'out_channels': num_kernels,
+            'kernel_size': (3, 3),
+            'padding': (1, 1),
+            'frame_size': patch_size,
+        }
+
         # Add First layer (Different in_channels than the rest)
         self.sequential.add_module(
-            "convlstm1", network_parts.ConvLSTM(
-                in_channels=num_channels, out_channels=num_kernels,
-                kernel_size=kernel_size, padding=padding, frame_size=frame_size)
+            "convlstm1", network_parts.ConvLSTM(num_channels, **convlstm_kwargs)
         )
 
         self.sequential.add_module(
@@ -233,9 +241,7 @@ class ConvLSTMNet(nn.Module):
         # Add rest of the layers
         for l in range(2, num_layers + 1):
             self.sequential.add_module(
-                f"convlstm{l}", network_parts.ConvLSTM(
-                    in_channels=num_kernels, out_channels=num_kernels,
-                    kernel_size=kernel_size, padding=padding, frame_size=frame_size)
+                f"convlstm{l}", network_parts.ConvLSTM(num_kernels, **convlstm_kwargs)
             )
 
             self.sequential.add_module(
@@ -243,11 +249,11 @@ class ConvLSTMNet(nn.Module):
             )
 
             # Add Convolutional Layer to predict output frame
-        self.conv = nn.Conv2d(
-            in_channels=num_kernels, out_channels=n_classes,
-            kernel_size=kernel_size, padding=padding)
+        self.conv = nn.Conv2d(num_kernels, n_classes, (3, 3), padding=(1, 1))
 
     def forward(self, X):
+        # (B, TS, C, H, W) -> (B, C, TS, H, W)
+        X = X.permute(0, 2, 1, 3, 4)
         # Forward propagation through all the layers
         output = self.sequential(X)
 
