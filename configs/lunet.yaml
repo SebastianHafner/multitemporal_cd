@@ -1,9 +1,9 @@
 _BASE_: "base.yaml"
-DEBUG: True
+DEBUG: False
 
 MODEL:
   TYPE: 'lunet'
 
 DATALOADER:
-  ENFORCE_PATCH_SIZE: False
+  ENFORCE_PATCH_SIZE: True
   TIMESERIES_LENGTH: 3
