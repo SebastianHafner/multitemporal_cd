@@ -1,0 +1,9 @@
+_BASE_: "base.yaml"
+DEBUG: False
+
+MODEL:
+  TYPE: 'convlstmnet'
+
+DATALOADER:
+  ENFORCE_PATCH_SIZE: True
+  TIMESERIES_LENGTH: 3

@@ -21,6 +21,8 @@ def create_network(cfg):
         model = LUNet(cfg)
     elif cfg.MODEL.TYPE == 'alunet':
         model = ALUNet(cfg)
+    elif cfg.MODEL.TYPE == 'convlstmnet':
+        model = ConvLSTMNet(cfg)
     else:
         raise Exception(f'Unknown network ({cfg.MODEL.TYPE}).')
     return nn.DataParallel(model)
@@ -191,9 +193,31 @@ class ALUNet(nn.Module):
         self._cfg = cfg
         n_channels = cfg.MODEL.IN_CHANNELS
         n_classes = cfg.MODEL.OUT_CHANNELS
+        self.convlstm = network_parts.ConvLSTM(n_channels, 16, (3, 3), 1)
+        self.outconv = nn.Conv2d(16, n_classes, 1)
 
     def forward(self, x: torch.tensor):
-        pass
+        x1, _ = self.convlstm(x)
+        x1 = x1[0]
+        out = self.outconv(x1)
+        return out
+
+
+class ConvLSTMNet(nn.Module):
+    def __init__(self, cfg):
+        super(ConvLSTMNet, self).__init__()
+
+        self._cfg = cfg
+        n_channels = cfg.MODEL.IN_CHANNELS
+        n_classes = cfg.MODEL.OUT_CHANNELS
+        self.convlstm = network_parts.ConvLSTM(n_channels, 16, (3, 3), 1, batch_first=True)
+        self.outconv = nn.Conv2d(16, n_classes, 1)
+
+    def forward(self, x: torch.tensor):
+        x1, _ = self.convlstm(x)
+        x1 = x1[0]
+        out = self.outconv(x1[:, -1])
+        return out
 
 
 # U-net with LSTM units from https://ieeexplore.ieee.org/abstract/document/8900330
