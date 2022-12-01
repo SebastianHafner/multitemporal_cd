@@ -152,9 +152,11 @@ class LUNet(nn.Module):
         self.convlstm2 = network_parts.ConvLSTM(16, 32, (patch_size // 2, patch_size // 2), **convlstm_kwargs)
         self.pool2 = nn.MaxPool3d((1, 2, 2))
         self.convlstm3 = network_parts.ConvLSTM(32, 64, (patch_size // 4, patch_size // 4), **convlstm_kwargs)
-        self.up1 = nn.ConvTranspose2d(64, 64, 2, stride=2)
+        self.up1 = nn.ConvTranspose3d(64, 64, (1, 2, 2), stride=(1, 2, 2))
+        # self.up1 = nn.ConvTranspose2d(64, 64, 2, stride=2)
         self.convlstm4 = network_parts.ConvLSTM(96, 32, (patch_size // 2, patch_size // 2), **convlstm_kwargs)
-        self.up2 = nn.ConvTranspose2d(32, 32, 2, stride=2)
+        self.up2 = nn.ConvTranspose3d(32, 32, (1, 2, 2), stride=(1, 2, 2))
+        # self.up2 = nn.ConvTranspose2d(32, 32, 2, stride=2)
         self.convlstm5 = network_parts.ConvLSTM(48, 16, (patch_size, patch_size), ** convlstm_kwargs)
         self.conv6 = nn.Conv2d(16, n_classes, (3, 3), padding=(1, 1))
 
@@ -174,17 +176,19 @@ class LUNet(nn.Module):
         x5 = self.convlstm3(x4)
 
         # up 1
-        x6 = []
-        for i in range(x.size(2)):
-            x6.append(self.up1(x5[:, :, i]))
-        x6 = torch.stack(x6, dim=2)
+        # x6 = []
+        # for i in range(x.size(2)):
+        #     x6.append(self.up1(x5[:, :, i]))
+        # x6 = torch.stack(x6, dim=2)
+        x6 = self.up1(x5)
         x7 = self.convlstm4(torch.cat((x3, x6), dim=1))
 
         # up 2
-        x8 = []
-        for i in range(x.size(2)):
-            x8.append(self.up2(x7[:, :, i]))
-        x8 = torch.stack(x8, dim=2)
+        # x8 = []
+        # for i in range(x.size(2)):
+        #     x8.append(self.up2(x7[:, :, i]))
+        # x8 = torch.stack(x8, dim=2)
+        x8 = self.up2(x7)
         x9 = self.convlstm5(torch.cat((x1, x8), dim=1))
 
         out = self.conv6(x9[:, :, -1])
