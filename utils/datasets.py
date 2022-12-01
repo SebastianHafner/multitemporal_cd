@@ -218,7 +218,6 @@ class SpaceNet7EvaluationDataset(AbstractSpaceNet7Dataset):
         super().__init__(cfg, run_type)
 
         self.enforce_patch_size = cfg.DATALOADER.ENFORCE_PATCH_SIZE
-        self.patch_ids = geofiles.load_json(self.root_path / f'patch_ids_{cfg.MODEL.PATCH_SIZE}.json')
 
         # handling transformations of data
         self.transform = augmentations.compose_transformations(cfg, no_augmentations=True)
@@ -236,11 +235,13 @@ class SpaceNet7EvaluationDataset(AbstractSpaceNet7Dataset):
         self.samples = []
         for aoi_id in self.aoi_ids:
             if self.enforce_patch_size:
-                for patch_id in self.patch_ids[aoi_id]:
-                    self.samples.append({
-                        'aoi_id': aoi_id,
-                        'patch_id': patch_id
-                    })
+                for i in (0, 1024, self.patch_size):
+                    for j in (0, 1024, self.patch_size):
+                        self.samples.append({
+                            'aoi_id': aoi_id,
+                            'i': i,
+                            'j': j,
+                        })
             else:
                 self.samples.append({'aoi_id': aoi_id})
 
@@ -275,8 +276,10 @@ class SpaceNet7EvaluationDataset(AbstractSpaceNet7Dataset):
         timeseries, change = self.transform((timeseries, change))
 
         if self.enforce_patch_size:
+            assert(timeseries.size(-2) == timeseries.size(-1))
+            assert(change.size(-2) == timeseries.size(-1))
             # crop to patch
-            i, j = sample['patch_id']
+            i, j = sample['i'], sample['j']
             timeseries = timeseries[:, :, i:i+self.patch_size, j:j+self.patch_size]
             change = change[:, i:i + self.patch_size, j:j + self.patch_size]
 
