@@ -65,7 +65,8 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
         img = img[:, :, self.s2_indices]
         return img.astype(np.float32)
 
-    def _load_satellite_image(self, aoi_id: str, dataset: str, year: int, month: int) -> np.ndarray:
+    def _load_satellite_image(self, aoi_id: str, dataset: str, year: int, month: int,
+                              padding: bool = True) -> np.ndarray:
         if self.sensor == 'planetscope':
             img = self._load_planetscope_mosaic(aoi_id, dataset, year, month)
         elif self.sensor == 'sentinel1':
@@ -74,6 +75,8 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
             img = self._load_sentinel2_scene(aoi_id, dataset, year, month)
         else:
             raise Exception('Unknown sensor')
+        if padding:
+            img = self.pad(img)
         return img
 
     def _load_satellite_timeseries(self, aoi_id: str, dataset: str, dates: list) -> np.ndarray:
@@ -84,11 +87,13 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
         timeseries = np.stack(timeseries)
         return timeseries
 
-    def _load_building_label(self, aoi_id: str, year: int, month: int) -> np.ndarray:
+    def _load_building_label(self, aoi_id: str, year: int, month: int, padding: bool = True) -> np.ndarray:
         folder = self.root_path / 'train' / aoi_id / 'labels_raster'
         file = folder / f'global_monthly_{year}_{month:02d}_mosaic_{aoi_id}_Buildings.tif'
         label, _, _ = geofiles.read_tif(file)
         label = label > 0
+        if padding:
+            label = self.pad(label)
         return label.astype(np.float32)
 
     def _load_change_label(self, aoi_id: str, year_t1: int, month_t1: int, year_t2: int, month_t2) -> np.ndarray:
@@ -126,6 +131,14 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
 
     def __str__(self):
         return f'Dataset with {self.length} samples.'
+
+    @staticmethod
+    def pad(arr: np.ndarray, res: int = 1024) -> np.ndarray:
+        assert(len(arr.shape) == 3)
+        h, w, _ = arr.shape
+        arr = np.pad(arr, pad_width=((0, res - h), (0, res - w), (0, 0)), mode='edge')
+        assert (arr.shape[0] == arr.shape[1])
+        return arr
 
 
 class SpaceNet7TrainingDataset(AbstractSpaceNet7Dataset):

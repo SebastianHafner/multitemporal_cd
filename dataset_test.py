@@ -76,6 +76,7 @@ def run_test(cfg):
                 for j in range(TS):
                     img = x[i, j, ]
                     img = img.permute(1, 2, 0).cpu().numpy()
+                    img = np.pad(img, pad_width=((0, 1), (0, 1), (0, 0)), mode='constant', constant_values=1)
                     axs[i, j].imshow(img)
 
             for _, ax in np.ndenumerate(axs):
