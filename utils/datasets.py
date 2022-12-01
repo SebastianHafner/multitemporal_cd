@@ -235,8 +235,8 @@ class SpaceNet7EvaluationDataset(AbstractSpaceNet7Dataset):
         self.samples = []
         for aoi_id in self.aoi_ids:
             if self.enforce_patch_size:
-                for i in (0, 1024, self.patch_size):
-                    for j in (0, 1024, self.patch_size):
+                for i in range(0, 1024, self.patch_size):
+                    for j in range(0, 1024, self.patch_size):
                         self.samples.append({
                             'aoi_id': aoi_id,
                             'i': i,
@@ -249,7 +249,6 @@ class SpaceNet7EvaluationDataset(AbstractSpaceNet7Dataset):
         self.aoi_ids = manager.list(self.aoi_ids)
         self.samples = manager.list(self.samples)
         self.metadata = manager.dict(self.metadata)
-        self.patch_ids = manager.dict(self.patch_ids)
 
         self.length = len(self.aoi_ids)
 
