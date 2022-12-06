@@ -15,23 +15,24 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
 
         # unpacking config
         self.root_path = Path(cfg.PATHS.DATASET)
-        self.sensor = cfg.DATALOADER.SENSOR
-        self.timeseries_length = cfg.DATALOADER.TIMESERIES_LENGTH
+        self.multimodal = cfg.DATALOADER.MULTIMODAL
+        self.modalities = cfg.DATALOADER.MODALITIES
+        self.timeseries_lengths = cfg.DATALOADER.TIMESERIES_LENGTHS
         self.patch_size = cfg.MODEL.PATCH_SIZE
 
-        self.metadata = geofiles.load_json(self.root_path / f'metadata_multimodal_cd.json')
+        self.metadata = geofiles.load_json(self.root_path / f'metadata_multitemporal_cd.json')
 
-        self.include_alpha = cfg.DATALOADER.INCLUDE_ALPHA
-        if cfg.DATALOADER.SENSOR == 'planetscope':
-            self.img_bands = 3 if not self.include_alpha else 4
-        elif self.sensor == 'sentinel1':
-            self.img_bands = len(cfg.DATALOADER.SENTINEL1_BANDS)
-        elif self.sensor == 'sentinel2':
-            self.img_bands = len(cfg.DATALOADER.SENTINEL2_BANDS)
+        self.img_bands = []
+        for i, modality in enumerate(self.modalities):
+            if modality == 'opt':
+                self.img_bands = 3
+            elif modality == 'sar':
+                self.img_bands = len(cfg.DATALOADER.SAR_BANDS)
+            else:
+                raise Exception('Unknown modality')
 
         # creating boolean feature vector to subset sentinel 2 bands
-        self.s1_indices = [['VV', 'VH'].index(band) for band in cfg.DATALOADER.SENTINEL1_BANDS]
-        self.s2_indices = [['B2', 'B3', 'B4', 'B8'].index(band) for band in cfg.DATALOADER.SENTINEL2_BANDS]
+        self.sar_indices = [['VV', 'VH'].index(band) for band in cfg.DATALOADER.SAR_BANDS]
 
     @abstractmethod
     def __getitem__(self, index: int) -> dict:
@@ -41,49 +42,58 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         pass
 
-    def _load_planetscope_mosaic(self, aoi_id: str, dataset: str, year: int, month: int) -> np.ndarray:
+    def _get_timestamps(self, aoi_id: str) -> list:
+        timestamps = self.metadata[aoi_id]
+        if self.multimodal or self.cfg.DATALOADER.CONSISTENT_TIMESERIES:
+            timestamps = [ts for ts in timestamps if not ts['mask'] and ts['sentinel1']]
+        else:
+            assert(len(self.modalities) == 1)
+            if self.modalities[0] == 'opt':
+                timestamps = [ts for ts in timestamps if not ts['mask']]
+            elif self.modalities[0] == 'sar':
+                timestamps = [ts for ts in timestamps if not ts['mask'] and ts['sentinel1']]
+        return timestamps
+
+    def _load_opt_img(self, aoi_id: str, dataset: str, year: int, month: int, padding: bool = True) -> np.ndarray:
         folder = self.root_path / dataset / aoi_id / 'images_masked'
         file = folder / f'global_monthly_{year}_{month:02d}_mosaic_{aoi_id}.tif'
         img, _, _ = geofiles.read_tif(file)
         img = img / 255
-        # 4th band (last oen) is alpha band
-        if not self.include_alpha:
-            img = img[:, :, :-1]
+        # 4th band is alpha band
+        img = img[:, :, :-1]
+        if padding:
+            img = self.pad(img)
         return img.astype(np.float32)
 
-    def _load_sentinel1_scene(self, aoi_id: str, dataset: str, year: int, month: int) -> np.ndarray:
+    def _load_sar_img(self, aoi_id: str, dataset: str, year: int, month: int, padding: bool = True) -> np.ndarray:
         folder = self.root_path / dataset / aoi_id / 'sentinel1'
         file = folder / f'sentinel1_{aoi_id}_{year}_{month:02d}.tif'
         img, *_ = geofiles.read_tif(file)
-        img = img[:, :, self.s1_indices]
-        return img.astype(np.float32)
-
-    def _load_sentinel2_scene(self, aoi_id: str, dataset: str, year: int, month: int) -> np.ndarray:
-        folder = self.root_path / dataset / aoi_id / 'sentinel2'
-        file = folder / f'sentinel2_{aoi_id}_{year}_{month:02d}.tif'
-        img, *_ = geofiles.read_tif(file)
-        img = img[:, :, self.s2_indices]
-        return img.astype(np.float32)
-
-    def _load_satellite_image(self, aoi_id: str, dataset: str, year: int, month: int,
-                              padding: bool = True) -> np.ndarray:
-        if self.sensor == 'planetscope':
-            img = self._load_planetscope_mosaic(aoi_id, dataset, year, month)
-        elif self.sensor == 'sentinel1':
-            img = self._load_sentinel1_scene(aoi_id, dataset, year, month)
-        elif self.sensor == 'sentinel2':
-            img = self._load_sentinel2_scene(aoi_id, dataset, year, month)
-        else:
-            raise Exception('Unknown sensor')
+        img = img[:, :, self.sar_indices]
         if padding:
             img = self.pad(img)
-        return img
+        return img.astype(np.float32)
 
-    def _load_satellite_timeseries(self, aoi_id: str, dataset: str, dates: list) -> np.ndarray:
+    def _load_data(self, modality: str, aoi_id: str, dataset: str, dates: list, unitemporal: bool = False,
+                   bitemporal: bool = False) -> np.ndarray:
         timeseries = []
-        for year, month in dates:
-            img = self._load_satellite_image(aoi_id, dataset, year, month)
-            timeseries.append(img)
+
+        if unitemporal:
+            dates = [dates[0]]
+        if bitemporal:
+            dates = [dates[0], dates[-1]]
+
+        if modality == 'sar':
+            for year, month in dates:
+                img = self._load_sar_img(aoi_id, dataset, year, month)
+                timeseries.append(img)
+        elif modality == 'opt':
+            for year, month in dates:
+                img = self._load_opt_img(aoi_id, dataset, year, month)
+                timeseries.append(img)
+        else:
+            raise Exception('Unkown modality')
+
         timeseries = np.stack(timeseries)
         return timeseries
 
@@ -143,18 +153,13 @@ class AbstractSpaceNet7Dataset(torch.utils.data.Dataset):
 
 class SpaceNet7TrainingDataset(AbstractSpaceNet7Dataset):
 
-    def __init__(self, cfg: experiment_manager.CfgNode, disable_multiplier: bool = False,
-                 no_augmentations: bool = False, dataset_mode: str = 'random'):
+    def __init__(self, cfg: experiment_manager.CfgNode, disable_multiplier: bool = False):
         super().__init__(cfg, 'training')
 
-        # handling transformations of data
-        self.no_augmentations = no_augmentations
-        self.transform = augmentations.compose_transformations(cfg, no_augmentations)
+        self.transform = augmentations.compose_transformations(cfg)
 
         # loading labeled samples (sn7 train set) and subset to run type aoi ids
         self.aoi_ids = list(cfg.DATASET.TRAIN_IDS)
-
-        self.dataset_mode = dataset_mode
 
         if not disable_multiplier:
             self.aoi_ids = self.aoi_ids * cfg.DATALOADER.TRAINING_MULTIPLIER
@@ -168,41 +173,30 @@ class SpaceNet7TrainingDataset(AbstractSpaceNet7Dataset):
     def __getitem__(self, index):
 
         aoi_id = self.aoi_ids[index]
-        timestamps = self.metadata[aoi_id]
+        timestamps = self._get_timestamps(aoi_id)
         dataset = timestamps[0]['dataset']
 
-        if self.sensor == 'sentinel2' or self.sensor == 'sentinel2':
-            timestamps = [ts for ts in timestamps if not ts['mask'] and ts[self.sensor]]
-        else:
-            timestamps = [ts for ts in timestamps if not ts['mask']]
+        indices = list(sorted(np.random.randint(0, len(timestamps), size=max(self.cfg.DATALOADER.TIMESERIES_LENGTHS))))
+        dates = [(dict(timestamps[i])['year'], dict(timestamps[i])['month']) for i in indices]
 
-        if self.dataset_mode == 'evenly_spaced':
-            indices = [int(i) for i in np.linspace(0, len(timestamps) - 1, self.timeseries_length, endpoint=True)]
-        else:
-            indices = list(sorted(np.random.randint(0, len(timestamps), size=self.timeseries_length)))
-        dates = [(timestamps[i]['year'], timestamps[i]['month']) for i in indices]
-
-        timeseries = self._load_satellite_timeseries(aoi_id, dataset, dates)
+        data = []
+        for modality, n in zip(self.modalities, self.timeseries_lengths):
+            x = self._load_data(modality, aoi_id, dataset, dates, unitemporal=True if n == 1 else False,
+                                bitemporal=True if n == 2 else False)
+            data.append(x)
 
         change = self._load_change_label(aoi_id, *dates[0], *dates[-1])
-        # change_date = self._load_change_date_label(aoi_id, dates)
 
-        timeseries, change = self.transform((timeseries, change))
+        data, change = self.transform((data, change))
 
-        item = {
-            'x': timeseries,
-            'y': change,
-            'aoi_id': aoi_id,
-            'dates': dates,
-        }
+        item = {'y': change, 'aoi_id': aoi_id, 'dates': dates}
+        if self.multimodal:
+            for i in range(len(self.modalities)):
+                item[f'x_m{i+1}'] = data[i]
+        else:
+            item['x'] = data[0]
 
         return item
-
-    def get_index(self, aoi_id: str) -> int:
-        for index, candidate_aoi_id in enumerate(self.aoi_ids):
-            if aoi_id == candidate_aoi_id:
-                return index
-        return None
 
     def __len__(self):
         return self.length
@@ -256,46 +250,37 @@ class SpaceNet7EvaluationDataset(AbstractSpaceNet7Dataset):
 
         sample = self.samples[index]
         aoi_id = sample['aoi_id']
-        timestamps = self.metadata[aoi_id]
+        timestamps = self._get_timestamps(aoi_id)
         dataset = timestamps[0]['dataset']
 
-        if self.sensor == 'sentinel2' or self.sensor == 'sentinel2':
-            timestamps = [ts for ts in timestamps if not ts['mask'] and ts[self.sensor]]
-        else:
-            timestamps = [ts for ts in timestamps if not ts['mask']]
+        indices = [int(i) for i in np.linspace(0, len(timestamps) - 1, max(self.cfg.DATALOADER.TIMESERIES_LENGTHS),
+                                               endpoint=True)]
+        dates = [(dict(timestamps[i])['year'], dict(timestamps[i])['month']) for i in indices]
 
-        indices = [int(i) for i in np.linspace(0, len(timestamps) - 1, self.timeseries_length, endpoint=True)]
-        dates = [(timestamps[i]['year'], timestamps[i]['month']) for i in indices]
-
-        timeseries = self._load_satellite_timeseries(aoi_id, dataset, dates)
+        data = []
+        for modality, n in zip(self.modalities, self.timeseries_lengths):
+            x = self._load_data(modality, aoi_id, dataset, dates, unitemporal=True if n == 1 else False,
+                                bitemporal=True if n == 2 else False)
+            data.append(x)
 
         change = self._load_change_label(aoi_id, *dates[0], *dates[-1])
-        # change_date = self._load_change_date_label(aoi_id, dates)
 
-        timeseries, change = self.transform((timeseries, change))
+        data, change = self.transform((data, change))
 
         if self.enforce_patch_size:
-            assert(timeseries.size(-2) == timeseries.size(-1))
-            assert(change.size(-2) == timeseries.size(-1))
-            # crop to patch
             i, j = sample['i'], sample['j']
-            timeseries = timeseries[:, :, i:i+self.patch_size, j:j+self.patch_size]
+            for i, x in enumerate(data):
+                data[i] = x[:, :, i:i+self.patch_size, j:j+self.patch_size]
             change = change[:, i:i + self.patch_size, j:j + self.patch_size]
 
-        item = {
-            'x': timeseries,
-            'y': change,
-            'aoi_id': aoi_id,
-            'dates': dates,
-        }
+        item = {'y': change, 'aoi_id': aoi_id, 'dates': dates}
+        if self.multimodal:
+            for i in range(len(self.modalities)):
+                item[f'x_m{i + 1}'] = data[i]
+        else:
+            item['x'] = data[0]
 
         return item
-
-    def get_index(self, aoi_id: str) -> int:
-        for index, candidate_aoi_id in enumerate(self.aoi_ids):
-            if aoi_id == candidate_aoi_id:
-                return index
-        return None
 
     def __len__(self):
         return self.length

@@ -23,6 +23,10 @@ def create_network(cfg):
         model = ALUNet(cfg)
     elif cfg.MODEL.TYPE == 'convlstmnet':
         model = ConvLSTMNet(cfg)
+    elif cfg.MODEL.TYPE == 'fusionnet':
+        model = FusionNetV1(cfg)
+    elif cfg.MODEL.TYPE == 'smallfusionnet':
+        model = SmallFusionNetV1(cfg)
     else:
         raise Exception(f'Unknown network ({cfg.MODEL.TYPE}).')
     return nn.DataParallel(model)
@@ -138,7 +142,7 @@ class LUNet(nn.Module):
         super(LUNet, self).__init__()
 
         self._cfg = cfg
-        n_channels = cfg.MODEL.IN_CHANNELS
+        n_channels = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[0] == 'sar' else 3
         n_classes = cfg.MODEL.OUT_CHANNELS
         patch_size = cfg.MODEL.PATCH_SIZE
 
@@ -218,7 +222,7 @@ class ConvLSTMNet(nn.Module):
         super(ConvLSTMNet, self).__init__()
 
         self._cfg = cfg
-        num_channels = cfg.MODEL.IN_CHANNELS
+        num_channels = len(cfg.DATALOADER.SAR_BANDS) if self.modalities[0] == 'sar' else 3
         n_classes = cfg.MODEL.OUT_CHANNELS
         patch_size = (cfg.MODEL.PATCH_SIZE, cfg.MODEL.PATCH_SIZE)
         num_kernels = 64
@@ -276,7 +280,8 @@ class UNetLSTM(nn.Module):
         self.patch_size = cfg.MODEL.PATCH_SIZE
         self.Maxpool = nn.MaxPool2d(kernel_size=2, stride=2)
 
-        self.Conv1 = network_parts.ConvBlock(ch_in=cfg.MODEL.IN_CHANNELS, ch_out=16)
+        in_channels = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[0] == 'sar' else 3
+        self.Conv1 = network_parts.ConvBlock(ch_in=in_channels, ch_out=16)
         self.set1 = network_parts.ExtensionLSTM(16, self.patch_size, self.patch_size)
 
         self.Conv2 = network_parts.ConvBlock(ch_in=16, ch_out=32)
@@ -311,7 +316,6 @@ class UNetLSTM(nn.Module):
         x3, xout = self.set3(nn.Sequential(self.Maxpool, self.Conv3), xout, device)
         x4, xout = self.set4(nn.Sequential(self.Maxpool, self.Conv4), xout, device)
         x5, xout = self.set5(nn.Sequential(self.Maxpool, self.Conv5), xout, device)
-
         return x1, x2, x3, x4, x5
 
     def forward(self, x: torch.tensor):
@@ -343,6 +347,197 @@ class UNetLSTM(nn.Module):
         return d1
 
 
+class SmallFusionNetV1(nn.Module):
+    def __init__(self, cfg):
+        super(SmallFusionNetV1, self).__init__()
+
+        self.cfg = cfg
+        self.patch_size = cfg.MODEL.PATCH_SIZE
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # encoder modality 1 (time series)
+        in_channels_m1 = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[0] == 'sar' else 3
+        self.conv1_m1 = network_parts.ConvBlock(ch_in=in_channels_m1, ch_out=16)
+        self.set1 = network_parts.ExtensionLSTM(16, self.patch_size, self.patch_size)
+        self.conv2_m1 = network_parts.ConvBlock(ch_in=16, ch_out=32)
+        self.set2 = network_parts.ExtensionLSTM(32, self.patch_size / 2, self.patch_size / 2)
+        self.conv3_m1 = network_parts.ConvBlock(ch_in=32, ch_out=64)
+        self.set3 = network_parts.ExtensionLSTM(64, self.patch_size / 4, self.patch_size / 4)
+
+        # encoder modality 2 (uni-temporal)
+        in_channels_m2 = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[1] == 'sar' else 3
+        self.conv1_m2 = network_parts.ConvBlock(ch_in=in_channels_m2, ch_out=16)
+        self.conv2_m2 = network_parts.ConvBlock(ch_in=16, ch_out=32)
+        self.conv3_m2 = network_parts.ConvBlock(ch_in=32, ch_out=64)
+
+        # feature fusion
+        self.mmtm1 = network_parts.MMTM(64, 64, 1)
+        self.mmtm2 = network_parts.MMTM(32, 32, 1)
+        self.mmtm3 = network_parts.MMTM(16, 16, 1)
+
+        # decoder modality 1
+        self.up1_m1 = network_parts.UpConv(ch_in=64, ch_out=32)
+        self.up_conv1_m1 = network_parts.ConvBlock(ch_in=64, ch_out=32)
+        self.up2_m1 = network_parts.UpConv(ch_in=32, ch_out=16)
+        self.up_conv2_m1 = network_parts.ConvBlock(ch_in=32, ch_out=16)
+
+        # decoder modality 2
+        self.up1_m2 = network_parts.UpConv(ch_in=64, ch_out=32)
+        self.up_conv1_m2 = network_parts.ConvBlock(ch_in=64, ch_out=32)
+        self.up2_m2 = network_parts.UpConv(ch_in=32, ch_out=16)
+        self.up_conv2_m2 = network_parts.ConvBlock(ch_in=32, ch_out=16)
+
+        # out convolutions
+        self.outconv_m1 = nn.Conv2d(16, cfg.MODEL.OUT_CHANNELS, kernel_size=1, stride=1, padding=0)
+        self.outconv_m2 = nn.Conv2d(16, cfg.MODEL.OUT_CHANNELS, kernel_size=1, stride=1, padding=0)
+
+    def encoder_m1(self, x: torch.tensor):
+        x1, xout = self.set1(self.conv1_m1, x, device)
+        x2, xout = self.set2(nn.Sequential(self.pool, self.conv2_m1), xout, device)
+        x3, xout = self.set3(nn.Sequential(self.pool, self.conv3_m1), xout, device)
+        return x1, x2, x3
+
+    def encoder_m2(self, x: torch.tensor):
+        x1 = self.conv1_m2(x)
+        x2 = self.conv2_m2(self.pool(x1))
+        x3 = self.conv3_m2(self.pool(x2))
+        return x1, x2, x3
+
+    def forward(self, x_m1: torch.tensor, x_m2: torch.tensor):
+        # encoding path
+        # (B, T, C, H, W) -> (T, B, C, H, W)
+        x_m1 = x_m1.permute(1, 0, 2, 3, 4)
+        x1_m1, x2_m1, x3_m1 = self.encoder_m1(x_m1)
+
+        assert(x_m2.size(1) == 1)
+        x_m2 = x_m2[:, 0]
+        x1_m2, x2_m2, x3_m2 = self.encoder_m2(x_m2)
+
+        # cross-modal flow
+        x3_m1_hat, x3_m2_hat = self.mmtm1(x3_m1, x3_m2)
+        x2_m1_hat, x2_m2_hat = self.mmtm2(x2_m1, x2_m2)
+        x1_m1_hat, x1_m2_hat = self.mmtm3(x1_m1, x1_m2)
+
+        # decoding modality 1
+        x4_m1 = self.up1_m1(x3_m1_hat)
+        x4_m1 = torch.cat((x2_m1_hat, x4_m1), dim=1)
+        x4_m1 = self.up_conv1_m1(x4_m1)
+
+        x5_m1 = self.up2_m1(x4_m1)
+        x5_m1 = torch.cat((x1_m1_hat, x5_m1), dim=1)
+        x5_m1 = self.up_conv2_m1(x5_m1)
+
+        # decoding modality 2
+        x4_m2 = self.up1_m2(x3_m2_hat)
+        x4_m2 = torch.cat((x2_m2_hat, x4_m2), dim=1)
+        x4_m2 = self.up_conv1_m2(x4_m2)
+
+        x5_m2 = self.up2_m2(x4_m2)
+        x5_m2 = torch.cat((x1_m2_hat, x5_m2), dim=1)
+        x5_m2 = self.up_conv2_m2(x5_m2)
+
+        out_m1 = self.outconv_m1(x5_m1)
+        out_m2 = self.outconv_m2(x5_m2)
+
+        return out_m1, out_m2
+
+
+class FusionNetV1(nn.Module):
+    def __init__(self, cfg):
+        super(FusionNetV1, self).__init__()
+
+        self.cfg = cfg
+        self.patch_size = cfg.MODEL.PATCH_SIZE
+        self.pool = nn.MaxPool2d(kernel_size=2, stride=2)
+
+        # encoder modality 1 (time series)
+        in_channels_m1 = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[0] == 'sar' else 3
+        self.conv1_m1 = network_parts.ConvBlock(ch_in=in_channels_m1, ch_out=16)
+        self.set1 = network_parts.ExtensionLSTM(16, self.patch_size, self.patch_size)
+        self.conv2_m1 = network_parts.ConvBlock(ch_in=16, ch_out=32)
+        self.set2 = network_parts.ExtensionLSTM(32, self.patch_size / 2, self.patch_size / 2)
+        self.conv3_m1 = network_parts.ConvBlock(ch_in=32, ch_out=64)
+        self.set3 = network_parts.ExtensionLSTM(64, self.patch_size / 4, self.patch_size / 4)
+        self.conv4_m1 = network_parts.ConvBlock(ch_in=64, ch_out=128)
+        self.set4 = network_parts.ExtensionLSTM(128, self.patch_size / 8, self.patch_size / 8)
+        self.conv5_m1 = network_parts.ConvBlock(ch_in=128, ch_out=256)
+        self.set5 = network_parts.ExtensionLSTM(256, self.patch_size / 16, self.patch_size / 16)
+
+        # encoder modality 2 (uni-temporal)
+        in_channels_m2 = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[1] == 'sar' else 3
+        self.conv1_m2 = network_parts.ConvBlock(ch_in=in_channels_m2, ch_out=16)
+        self.conv2_m2 = network_parts.ConvBlock(ch_in=16, ch_out=32)
+        self.conv3_m2 = network_parts.ConvBlock(ch_in=32, ch_out=64)
+        self.conv4_m2 = network_parts.ConvBlock(ch_in=64, ch_out=128)
+        self.conv5_m2 = network_parts.ConvBlock(ch_in=128, ch_out=256)
+
+        # decoder
+        self.mmtm1 = network_parts.MMTM(256, 256, 1)
+        self.up1 = network_parts.UpConv(ch_in=256, ch_out=128)
+        self.up_conv1 = network_parts.ConvBlock(ch_in=256, ch_out=128)
+
+        self.mmtm2 = network_parts.MMTM(128, 128, 1)
+        self.up2 = network_parts.UpConv(ch_in=128, ch_out=64)
+        self.up_conv2 = network_parts.ConvBlock(ch_in=128, ch_out=64)
+
+        self.mmtm3 = network_parts.MMTM(64, 64, 1)
+        self.up3 = network_parts.UpConv(ch_in=64, ch_out=32)
+        self.up_conv3 = network_parts.ConvBlock(ch_in=64, ch_out=32)
+
+        self.mmtm4 = network_parts.MMTM(32, 32, 1)
+        self.up4 = network_parts.UpConv(ch_in=32, ch_out=16)
+        self.Up_conv4 = network_parts.ConvBlock(ch_in=32, ch_out=16)
+
+        self.outconv = nn.Conv2d(16, cfg.MODEL.OUT_CHANNELS, kernel_size=1, stride=1, padding=0)
+
+    def encoder_m1(self, x: torch.tensor):
+        x1, xout = self.set1(self.conv1_m1, x, device)
+        x2, xout = self.set2(nn.Sequential(self.pool, self.conv2_m1), xout, device)
+        x3, xout = self.set3(nn.Sequential(self.pool, self.conv3_m1), xout, device)
+        x4, xout = self.set4(nn.Sequential(self.pool, self.conv4_m1), xout, device)
+        x5, xout = self.set5(nn.Sequential(self.pool, self.conv5_m1), xout, device)
+        return x1, x2, x3, x4, x5
+
+    def encoder_m2(self, x: torch.tensor):
+        x1 = self.conv1_m2(x)
+        x2 = self.conv2_m2(self.pool(x1))
+        x3 = self.conv3_m2(self.pool(x2))
+        x4 = self.conv4_m2(self.pool(x3))
+        x5 = self.conv5_m2(self.pool(x4))
+        return x1, x2, x3, x4, x5
+
+    def forward(self, x_m1: torch.tensor, x_m2: torch.tensor):
+        # encoding path
+        # (B, T, C, H, W) -> (T, B, C, H, W)
+        x_m1 = x_m1.permute(1, 0, 2, 3, 4)
+        x1_m1, x2_m1, x3_m1, x4_m1, x5_m1 = self.encoder_m1(x_m1)
+
+        x_m2 = x_m2.squeeze()
+        x1_m2, x2_m2, x3_m2, x4_m2, x5_m2 = self.encoder_m2(x_m2)
+
+        # decoding + concat path
+        x6 = self.up1(x5_m1)
+        x4 = self.mmtm1(x4_m1, x4_m2)
+        x6 = torch.cat((x6, x4), dim=1)
+        x6 = self.up_conv1(x6)
+
+        d4 = self.Up4(d5)
+        d4 = torch.cat((d4, x3), dim=1)
+        d4 = self.Up_conv4(d4)
+
+        d3 = self.Up3(d4)
+        d3 = torch.cat((d3, x2), dim=1)
+        d3 = self.Up_conv3(d3)
+
+        d2 = self.Up2(d3)
+        d2 = torch.cat((d2, x1), dim=1)
+        d2 = self.Up_conv2(d2)
+
+        d1 = self.Conv_1x1(d2)
+
+        return d1
+
+
 # https://rcdaudt.github.io/
 class SiamDiff(nn.Module):
 
@@ -351,7 +546,7 @@ class SiamDiff(nn.Module):
 
         self.cfg = cfg
 
-        in_channels = cfg.MODEL.IN_CHANNELS
+        in_channels = len(cfg.DATALOADER.SAR_BANDS) if cfg.DATALOADER.MODALITIES[0] == 'sar' else 3
         out_channels = cfg.MODEL.OUT_CHANNELS
 
         self.conv11 = nn.Conv2d(in_channels, 16, kernel_size=3, padding=1)

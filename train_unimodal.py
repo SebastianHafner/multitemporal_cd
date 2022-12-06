@@ -145,7 +145,7 @@ if __name__ == '__main__':
         config=cfg,
         project='multitemporal_cd',
         entity='spacenet7',
-        tags=['cd', 'multitemporal', 'spacenet7', ],
+        tags=['cd', 'multitemporal', 'spacenet7', 'unimodal'],
         mode='online' if not cfg.DEBUG else 'disabled',
     )
 

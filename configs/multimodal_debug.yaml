@@ -1,0 +1,16 @@
+_BASE_: "base.yaml"
+DEBUG: True
+
+MODEL:
+  TYPE: 'smallfusionnet'
+  IN_CHANNELS: 1
+  OUT_CHANNELS: 1
+  LOSS_TYPE: 'PowerJaccardLoss'
+  PATCH_SIZE: 128
+
+DATALOADER:
+  MULTIMODAL: True
+  TIMESERIES_LENGTHS: [3, 1]
+  MODALITIES: ['sar', 'opt']
+  CONSISTENT_TIMESERIES: True
+  ENFORCE_PATCH_SIZE: True

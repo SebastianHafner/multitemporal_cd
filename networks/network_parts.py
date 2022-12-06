@@ -231,3 +231,42 @@ class ConvLSTM(nn.Module):
             output[:, :, time_step] = H
 
         return output
+
+
+class MMTM(nn.Module):
+    def __init__(self, dim_sar, dim_opt, ratio):
+        super(MMTM, self).__init__()
+        dim = dim_sar + dim_opt
+        dim_out = int(2 * dim / ratio)
+
+        self.fc_squeeze = nn.Linear(dim, dim_out)
+
+        self.fc_sar = nn.Linear(dim_out, dim_sar)
+        self.fc_opt = nn.Linear(dim_out, dim_opt)
+
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, f1: torch.tensor, f2: torch.tensor) -> tuple:
+
+        tview_f1 = f1.view(f1.shape[:2] + (-1,))
+        squeeze_f1 = torch.mean(tview_f1, dim=-1)
+
+        tview_f2 = f2.view(f2.shape[:2] + (-1,))
+        squeeze_f2 = torch.mean(tview_f2, dim=-1)
+
+        squeeze = torch.cat((squeeze_f1, squeeze_f2), 1)
+        excitation = self.fc_squeeze(squeeze)
+        excitation = self.relu(excitation)
+        f1_out = self.fc_sar(excitation)
+        f2_out = self.fc_opt(excitation)
+
+        f1_out = self.sigmoid(f1_out)
+        f2_out = self.sigmoid(f2_out)
+
+        # matching the shape of the excitation signals to the input features for recalibration
+        # (B, C) -> (B, C, H, W)
+        f1_out = f1_out.view(f1_out.shape + (1,) * (len(f1.shape) - len(f1_out.shape)))
+        f2_out = f2_out.view(f2_out.shape + (1,) * (len(f2.shape) - len(f2_out.shape)))
+
+        return f1 * f1_out, f2 * f2_out

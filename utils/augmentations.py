@@ -4,7 +4,7 @@ from torchvision import transforms
 import numpy as np
 
 
-def compose_transformations(cfg, no_augmentations: bool):
+def compose_transformations(cfg, no_augmentations: bool = False):
     if no_augmentations:
         return transforms.Compose([Numpy2Torch()])
 
@@ -37,39 +37,43 @@ def compose_transformations(cfg, no_augmentations: bool):
 
 class Numpy2Torch(object):
     def __call__(self, args):
-        timeseries, label = args
-        timeseries_tensor = torch.tensor(timeseries.transpose(0, 3, 1, 2))
+        data, label = args
+        for i, x in enumerate(data):
+            assert(len(x.shape) == 4)
+            data[i] = torch.tensor(x.transpose(0, 3, 1, 2))
         label_tensor = TF.to_tensor(label)
-        return timeseries_tensor, label_tensor
+        return data, label_tensor
 
 
 class RandomFlip(object):
     def __call__(self, args):
-        timeseries, label = args
+        data, label = args
         horizontal_flip = np.random.choice([True, False])
         vertical_flip = np.random.choice([True, False])
 
         if horizontal_flip:
-            timeseries = np.flip(timeseries, axis=2)
-            label = np.flip(label, axis=1)
+            for i, x in enumerate(data):
+                data[i] = np.flip(x, axis=2).copy()
+            label = np.flip(label, axis=1).copy()
 
         if vertical_flip:
-            timeseries = np.flip(timeseries, axis=1)
-            label = np.flip(label, axis=0)
+            for i, x in enumerate(data):
+                data[i] = np.flip(x, axis=1).copy()
+            label = np.flip(label, axis=0).copy()
 
-        timeseries = timeseries.copy()
         label = label.copy()
 
-        return timeseries, label
+        return data, label
 
 
 class RandomRotate(object):
     def __call__(self, args):
-        timeseries, label = args
+        data, label = args
         k = np.random.randint(1, 4)  # number of 90 degree rotations
-        timeseries = np.rot90(timeseries, k, axes=(1, 2)).copy()
+        for i, x in enumerate(data):
+            data[i] = np.rot90(x, k, axes=(1, 2)).copy()
         label = np.rot90(label, k, axes=(0, 1)).copy()
-        return timeseries, label
+        return data, label
 
 
 class ColorShift(object):
@@ -105,36 +109,46 @@ class UniformCrop(object):
         self.crop_size = crop_size
 
     def random_crop(self, args):
-        timeseries, label = args
+        x_min, x_max, y_min, y_max = self.random_crop_bounds(args)
+        data_list, label = args
+        for i, data in enumerate(data_list):
+            data_list[i] = data[:, y_min:y_max, x_min:x_max, ]
+        label_crop = label[y_min:y_max, x_min:x_max, ]
+        return data_list, label_crop
+
+    def random_crop_bounds(self, args) -> tuple:
+        _, label = args
         height, width, _ = label.shape
         crop_limit_x = width - self.crop_size
         crop_limit_y = height - self.crop_size
         x = np.random.randint(0, crop_limit_x)
         y = np.random.randint(0, crop_limit_y)
-
-        timeseries_crop = timeseries[:, y:y + self.crop_size, x:x + self.crop_size, ]
-        label_crop = label[y:y+self.crop_size, x:x+self.crop_size, ]
-        return timeseries_crop, label_crop
+        return x, x + self.crop_size, y, y + self.crop_size
 
     def __call__(self, args):
-        timeseries, label = self.random_crop(args)
-        return timeseries, label
+        data, label = self.random_crop(args)
+        return data, label
 
 
 class ImportanceRandomCrop(UniformCrop):
-    def __call__(self, args):
+    def __call__(self, args, sample_size: int = 20, balancing_factor: int = 5):
 
-        sample_size = 20
-        balancing_factor = 5
+        data_list, label = args
 
-        random_crops = [self.random_crop(args) for _ in range(sample_size)]
-        crop_weights = np.array([(crop_label > 0).sum() for _, crop_label in random_crops]) + balancing_factor
+        random_bounds = [self.random_crop_bounds(args) for _ in range(sample_size)]
+
+        crop_weights = [(label[y_min:y_max, x_min:x_max, ]).sum() for x_min, x_max, y_min, y_max in random_bounds]
+        crop_weights = np.array(crop_weights) + balancing_factor
         crop_weights = crop_weights / crop_weights.sum()
-
         sample_idx = np.random.choice(sample_size, p=crop_weights)
-        timeseries, label = random_crops[sample_idx]
 
-        return timeseries, label
+        x_min, x_max, y_min, y_max = random_bounds[sample_idx]
+
+        for i, data in enumerate(data_list):
+            data_list[i] = data[:, y_min:y_max, x_min:x_max, ]
+        label_crop = label[y_min:y_max, x_min:x_max, ]
+
+        return data_list, label_crop
 
 
 class ArtificialTimeseriesGenerator(UniformCrop):
