@@ -63,10 +63,10 @@ def run_training(cfg):
             x_m2 = batch['x_m2'].to(device)
             y = batch['y'].to(device)
 
-            logits_change, logits_buildings = net(x_m1, x_m2)
-            y_hat_change, y_hat_buildings = torch.sigmoid(logits_change), torch.sigmoid(logits_buildings)
+            logits, _ = net(x_m1, x_m2)
+            y_hat = torch.sigmoid(logits)
 
-            loss = criterion(y_hat_change, y)
+            loss = criterion(y_hat, y)
             loss.backward()
             optimizer.step()
 
