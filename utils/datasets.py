@@ -187,14 +187,23 @@ class SpaceNet7TrainingDataset(AbstractSpaceNet7Dataset):
 
         change = self._load_change_label(aoi_id, *dates[0], *dates[-1])
 
-        data, change = self.transform((data, change))
+        buildings = []
+        if self.cfg.DATALOADER.INCLUDE_BUILDING_LABELS:
+            for date in dates:
+                building = self._load_building_label(aoi_id, *date)
+                buildings.append(building)
 
-        item = {'y': change, 'aoi_id': aoi_id, 'dates': dates}
+        data, change, buildings = self.transform((data, change, buildings))
+
+        item = {'y_ch': change, 'aoi_id': aoi_id, 'dates': dates}
         if self.multimodal:
             for i in range(len(self.modalities)):
                 item[f'x_m{i+1}'] = data[i]
         else:
             item['x'] = data[0]
+
+        if self.cfg.DATALOADER.INCLUDE_BUILDING_LABELS:
+            item['y_sem'] = torch.stack(buildings)
 
         return item
 

@@ -106,7 +106,7 @@ class ExtensionLSTM(nn.Module):
         self.dropout = nn.Dropout(0.7)
         self.LSTMCell = LSTMCell(self.hidden_size, self.hidden_size)
 
-    def forward(self, seq, xinp: torch.tensor, device):
+    def forward(self, seq, xinp: torch.tensor):
         xout = Variable(
             torch.zeros(int(xinp.size()[0]), int(xinp.size()[1]), self.hidden_size, self.height, self.width)
         ).to(device)
